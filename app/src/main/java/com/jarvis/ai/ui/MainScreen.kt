@@ -121,10 +121,12 @@ fun MainScreen() {
                 "MODEL" -> ModelScreen(modelReady, provider.loadedModelUri, status, powerMode, { powerMode = it }, { uri ->
                     val ctx = when (powerMode) { "PERFORMANCE" -> 2048; "BATTERY SAVER" -> 1024; else -> 1536 }
                     scope.launch {
-                        status = "Loading model…"
-                        val ok = provider.initialize(uri, ctx)
+                        status = "Preparing model…"
+                        val ok = provider.initialize(uri, ctx) { pct ->
+                            status = if (pct < 100) "Copying model to device storage… $pct%" else "Loading into memory…"
+                        }
                         modelReady = ok
-                        status = if (ok) "LOCAL MODEL READY" else "Model load failed — check it's a valid .gguf file"
+                        status = if (ok) "LOCAL MODEL READY" else provider.lastError ?: "Model load failed — check it's a valid .gguf file"
                     }
                 }, { provider.unloadModel(); modelReady = false; status = "Model unloaded" }, { screen = "HOME" })
                 "DIAG" -> Diagnostics(modelReady, lastTps, voice.isRecognitionAvailable(), onBack = { screen = "HOME" })
