@@ -21,8 +21,9 @@ import com.jarvis.ai.voice.VoiceState
 @Composable
 fun OrbView(state: VoiceState, powerMode: String, modifier: Modifier = Modifier.size(190.dp)) {
     if (powerMode == "BATTERY SAVER" && state == VoiceState.IDLE) {
+        val idleColor = MaterialTheme.colorScheme.primary
         Canvas(modifier) {
-            drawCircle(MaterialTheme.colorScheme.primary, size.minDimension / 4f, style = Stroke(3.dp.toPx()))
+            drawCircle(idleColor, size.minDimension / 4f, style = Stroke(3.dp.toPx()))
         }
         return
     }
@@ -41,7 +42,7 @@ fun OrbView(state: VoiceState, powerMode: String, modifier: Modifier = Modifier.
     }
     Canvas(modifier) {
         val r = size.minDimension / 3.4f * scale
-        drawCircle(Brush.radialGradient(listOf(core.copy(alpha = .55f), Color.Transparent), r * 1.5f), r * 1.5f)
+        drawCircle(Brush.radialGradient(listOf(core.copy(alpha = .55f), Color.Transparent), radius = r * 1.5f), r * 1.5f)
         drawCircle(core, r, style = Stroke(4.dp.toPx()))
     }
 }
