@@ -52,6 +52,7 @@ fun MainScreen() {
     var messages by remember { mutableStateOf(listOf<ChatMessage>()) }
     var lastTps by remember { mutableDoubleStateOf(0.0) }
     var status by remember { mutableStateOf("Ready") }
+    var modelReady by remember { mutableStateOf(false) }
 
     // A single ongoing conversation persisted across app restarts.
     val conversationId = remember { "default" }
@@ -113,20 +114,21 @@ fun MainScreen() {
     ) { pad ->
         Box(Modifier.padding(pad).fillMaxSize()) {
             when (screen) {
-                "CHAT" -> ChatScreen(messages, provider, status, onBack = { screen = "HOME" }, onSend = ::sendMessage, onStop = provider::stopGeneration, onClear = {
+                "CHAT" -> ChatScreen(messages, modelReady, status, onBack = { screen = "HOME" }, onSend = ::sendMessage, onStop = provider::stopGeneration, onClear = {
                     messages = emptyList()
                     scope.launch { dao.clearConversation(conversationId) }
                 })
-                "MODEL" -> ModelScreen(provider, powerMode, { powerMode = it }, { uri ->
+                "MODEL" -> ModelScreen(modelReady, provider.loadedModelUri, status, powerMode, { powerMode = it }, { uri ->
                     val ctx = when (powerMode) { "PERFORMANCE" -> 2048; "BATTERY SAVER" -> 1024; else -> 1536 }
                     scope.launch {
                         status = "Loading model…"
                         val ok = provider.initialize(uri, ctx)
-                        status = if (ok) "LOCAL MODEL READY" else "Model load failed"
+                        modelReady = ok
+                        status = if (ok) "LOCAL MODEL READY" else "Model load failed — check it's a valid .gguf file"
                     }
-                }, { provider.unloadModel(); status = "Model unloaded" }, { screen = "HOME" })
-                "DIAG" -> Diagnostics(provider, lastTps, voice.isRecognitionAvailable(), onBack = { screen = "HOME" })
-                else -> HomeScreen(provider.isInitialized, powerMode, voiceState, status,
+                }, { provider.unloadModel(); modelReady = false; status = "Model unloaded" }, { screen = "HOME" })
+                "DIAG" -> Diagnostics(modelReady, lastTps, voice.isRecognitionAvailable(), onBack = { screen = "HOME" })
+                else -> HomeScreen(modelReady, powerMode, voiceState, status,
                     onChat = { screen = "CHAT" },
                     onVoice = {
                         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) voice.startListening()
@@ -175,14 +177,14 @@ private fun HomeScreen(ready: Boolean, mode: String, state: VoiceState, status: 
 }
 
 @Composable
-private fun ChatScreen(messages: List<ChatMessage>, provider: LocalAIProvider, status: String, onBack: () -> Unit, onSend: (String) -> Unit, onStop: () -> Unit, onClear: () -> Unit) {
+private fun ChatScreen(messages: List<ChatMessage>, ready: Boolean, status: String, onBack: () -> Unit, onSend: (String) -> Unit, onStop: () -> Unit, onClear: () -> Unit) {
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     LaunchedEffect(messages.size) { if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex) }
     Column(Modifier.fillMaxSize().padding(12.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text("← Home") }
-            Text(if (provider.isInitialized) "LOCAL" else "NO MODEL", fontSize = 12.sp)
+            Text(if (ready) "LOCAL" else "NO MODEL", fontSize = 12.sp)
             TextButton(onClick = onClear) { Text("Clear") }
         }
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -206,7 +208,7 @@ private fun ChatScreen(messages: List<ChatMessage>, provider: LocalAIProvider, s
 }
 
 @Composable
-private fun ModelScreen(provider: LocalAIProvider, mode: String, onMode: (String) -> Unit, onPick: (Uri) -> Unit, onUnload: () -> Unit, onBack: () -> Unit) {
+private fun ModelScreen(ready: Boolean, loadedUri: Uri?, status: String, mode: String, onMode: (String) -> Unit, onPick: (Uri) -> Unit, onUnload: () -> Unit, onBack: () -> Unit) {
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let(onPick) }
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         TextButton(onClick = onBack) { Text("← Home") }
@@ -219,11 +221,13 @@ private fun ModelScreen(provider: LocalAIProvider, mode: String, onMode: (String
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
                 Text("GGUF Local Model", fontWeight = FontWeight.Bold)
-                Text(if (provider.isInitialized) "Ready: ${provider.loadedModelUri}" else "Select a .gguf model from storage", color = Color.Gray, fontSize = 12.sp)
+                Text(if (ready) "Ready: $loadedUri" else "Select a .gguf model from storage", color = Color.Gray, fontSize = 12.sp)
+                Spacer(Modifier.height(8.dp))
+                Text(status, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                 Spacer(Modifier.height(12.dp))
                 Row {
-                    Button(onClick = { picker.launch(arrayOf("application/octet-stream", "*/*")) }) { Text("Select GGUF") }
-                    if (provider.isInitialized) {
+                    Button(onClick = { picker.launch(arrayOf("*/*")) }) { Text("Select GGUF") }
+                    if (ready) {
                         Spacer(Modifier.width(8.dp))
                         OutlinedButton(onClick = onUnload) { Text("Unload") }
                     }
@@ -236,14 +240,14 @@ private fun ModelScreen(provider: LocalAIProvider, mode: String, onMode: (String
 }
 
 @Composable
-private fun Diagnostics(provider: LocalAIProvider, tps: Double, stt: Boolean, onBack: () -> Unit) {
+private fun Diagnostics(ready: Boolean, tps: Double, stt: Boolean, onBack: () -> Unit) {
     val info = remember { Debug.MemoryInfo() }
     Debug.getMemoryInfo(info)
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         TextButton(onClick = onBack) { Text("← Home") }
         Text("Diagnostics", fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(12.dp))
-        Metric("Native model", if (provider.isInitialized) "READY" else "NOT LOADED")
+        Metric("Native model", if (ready) "READY" else "NOT LOADED")
         Metric("Process PSS", "${info.totalPss / 1024} MB")
         Metric("Measured generation", "%.2f tok/s".format(tps))
         Metric("Offline-capable STT", if (stt) "AVAILABLE" else "UNAVAILABLE")
