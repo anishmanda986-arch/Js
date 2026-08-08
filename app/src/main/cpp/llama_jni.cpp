@@ -85,20 +85,33 @@ std::string tokenPiece(const llama_vocab * vocab, llama_token token) {
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_jarvis_ai_provider_LocalAIProvider_nativeInitModel(
-        JNIEnv * env, jobject, jint fd, jint contextSize) {
+        JNIEnv * env, jobject, jstring jPath, jint contextSize) {
     std::lock_guard<std::mutex> lock(g_state.mutex);
     ensureBackend();
     freeStateLocked();
     g_state.stop.store(false);
 
-    char path[64];
-    std::snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
+    if (!jPath) {
+        LOGE("nativeInitModel called with null path");
+        return JNI_FALSE;
+    }
+    const char * pathChars = env->GetStringUTFChars(jPath, nullptr);
+    if (!pathChars) {
+        LOGE("Unable to read model path string");
+        return JNI_FALSE;
+    }
+    std::string path(pathChars);
+    env->ReleaseStringUTFChars(jPath, pathChars);
 
+    // `path` is a real regular file staged in app-private storage by the Kotlin side
+    // (see LocalAIProvider.resolveToLocalFile), so it is always seekable and mmap-able —
+    // unlike a raw SAF/content-provider file descriptor, which some providers back with
+    // a pipe or a virtual/streamed document that mmap() cannot handle.
     llama_model_params modelParams = llama_model_default_params();
     modelParams.load_mode = LLAMA_LOAD_MODE_MMAP;
-    llama_model * model = llama_model_load_from_file(path, modelParams);
+    llama_model * model = llama_model_load_from_file(path.c_str(), modelParams);
     if (!model) {
-        LOGE("Unable to load GGUF model from fd=%d", fd);
+        LOGE("Unable to load GGUF model from path=%s", path.c_str());
         return JNI_FALSE;
     }
 
